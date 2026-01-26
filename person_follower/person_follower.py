@@ -35,12 +35,18 @@ class PersonFollower(Node):
         angle_max = input_msg.angle_max
         angle_increment = input_msg.angle_increment
         ranges = input_msg.ranges
-        #
-        # your code for computing vx, wz
-        #
-        vx = 0.
-        wz = 0.
-        #
+
+        distance = 0.0
+        angle = 0.0
+        
+        for i, r in enumerate(ranges):
+            if r != math.inf:
+                distance = r
+                angle = angle_min + i * angle_increment
+        
+        vx = 0.1 * distance
+        wz = 0.5 * angle  
+        
         output_msg = Twist()
         output_msg.linear.x = vx
         output_msg.angular.z = wz
