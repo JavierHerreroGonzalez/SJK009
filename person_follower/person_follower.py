@@ -17,6 +17,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
+from rclpy.qos import qos_profile_sensor_data
 
 class PersonFollower(Node):
     def __init__(self):
@@ -28,17 +29,17 @@ class PersonFollower(Node):
             LaserScan,
             '/scan',
             self.listener_callback,
-            qos_profile=qos_policy)
+            qos_profile_sensor_data)
 
         self.linear_k = 0.55
-        self.angular_k = 2.4
+        self.angular_k = 2.0
         self.distance = 0.5
         self.stop = 0.4
         self.max_vx = 0.15
         self.max_wz = 0.8
         self.max_dist = 2.0
-        self.start = -15
-        self.end = 15
+        self.start = -75
+        self.end = 75
 
     def listener_callback(self, input_msg):
         angle_min = input_msg.angle_min
@@ -61,7 +62,7 @@ class PersonFollower(Node):
 
         if best_range is not None:
             error_distance = best_range - self.distance
-            error_angle = (best_i * angle_increment + angle_min)
+            error_angle = (best_i * angle_increment)
 
             vx = self.linear_k * error_distance
             wz = self.angular_k * error_angle
@@ -72,6 +73,8 @@ class PersonFollower(Node):
             if best_range < self.stop:
                 vx = 0.0
                 wz = 0.0
+
+        print(f'vx: {vx}, wz: {wz}')
 
         output_msg = Twist()
         output_msg.linear.x = vx
