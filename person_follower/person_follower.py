@@ -15,125 +15,68 @@
 import math
 import rclpy
 from rclpy.node import Node
-
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 
 class PersonFollower(Node):
-
     def __init__(self):
         super().__init__('person_follower')
         self.publisher_ = self.create_publisher(Twist, '/cmd_vel', 10)
+        qos_policy = rclpy.qos.QoSProfile(reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT, history=rclpy.qos.HistoryPolicy.KEEP_LAST, depth=1)
+
         self.subscription = self.create_subscription(
             LaserScan,
             '/scan',
             self.listener_callback,
-            10)
-        self.subscription  # prevent unused variable warning
-        self.last_target_angle = None
-        self.last_target_distance = None
-        self.target_timeout = 0
+            qos_profile=qos_policy)
+
+        self.linear_k = 0.55
+        self.angular_k = 2.4
+        self.distance = 0.5
+        self.stop = 0.4
+        self.max_vx = 0.15
+        self.max_wz = 0.8
+        self.max_dist = 2.0
+        self.start = -15
+        self.end = 15
 
     def listener_callback(self, input_msg):
         angle_min = input_msg.angle_min
         angle_increment = input_msg.angle_increment
-        ranges = input_msg.ranges
+        ranges = list(input_msg.ranges)
 
-        CLUSTER_DIST = 0.12
-        MIN_CLUSTER_SIZE = 4
-        MAX_CLUSTER_SIZE = 15
+        best_range = None
+        best_i = None
 
-        TARGET_DISTANCE = 1.0
-
-        SAFE_DISTANCE = 0.35
-
-        MAX_LINEAR_SPEED = 0.5
-        MAX_ANGULAR_SPEED = 1.2
-
-        clusters = []
-        current_cluster = []
-
-        for i, r in enumerate(ranges):
-            if r == math.inf:
-                if current_cluster:
-                    clusters.append(current_cluster)
-                    current_cluster = []
+        for i in range(self.start, self.end):
+            r = ranges[i]
+            if not math.isfinite(r) or r > self.max_dist:
                 continue
+            if best_range is None or r < best_range:
+                best_range = r
+                best_i = i
 
-            angle = angle_min + i * angle_increment
+        vx = 0.0
+        wz = 0.0
 
-            if abs(angle) > math.radians(30):
-                if current_cluster:
-                    clusters.append(current_cluster)
-                    current_cluster = []
-                continue
+        if best_range is not None:
+            error_distance = best_range - self.distance
+            error_angle = (best_i * angle_increment + angle_min)
 
-            if not current_cluster:
-                current_cluster.append((r, angle))
-            else:
-                if abs(r - current_cluster[-1][0]) < CLUSTER_DIST:
-                    current_cluster.append((r, angle))
-                else:
-                    clusters.append(current_cluster)
-                    current_cluster = [(r, angle)]
+            vx = self.linear_k * error_distance
+            wz = self.angular_k * error_angle
 
-        if current_cluster:
-            clusters.append(current_cluster)
+            vx = max(min(vx, self.max_vx), -self.max_vx)
+            wz = max(min(wz, self.max_wz), -self.max_wz)
 
-        best_cluster = None
-        best_score = math.inf
+            if best_range < self.stop:
+                vx = 0.0
+                wz = 0.0
 
-        for cluster in clusters:
-            if not (MIN_CLUSTER_SIZE <= len(cluster) <= MAX_CLUSTER_SIZE):
-                continue
-
-            avg_r = sum(p[0] for p in cluster) / len(cluster)
-            avg_angle = sum(p[1] for p in cluster) / len(cluster)
-
-            if self.last_target_angle is not None:
-                angle_diff = abs(avg_angle - self.last_target_angle)
-            else:
-                angle_diff = 0.0
-
-            score = avg_r + 0.5 * angle_diff
-
-            if score < best_score:
-                best_score = score
-                best_cluster = (avg_r, avg_angle)
-
-        if best_cluster is None:
-            self.target_timeout += 1
-            if self.target_timeout > 10:
-                self.last_target_angle = None
-            return
-
-        target_distance, target_angle = best_cluster
-        self.last_target_angle = target_angle
-        self.last_target_distance = target_distance
-        self.target_timeout = 0
-
-        front_ranges = [
-            r for i, r in enumerate(ranges)
-            if r != math.inf and abs(angle_min + i * angle_increment) < math.radians(8)
-        ]
-
-        output = Twist()
-
-        if front_ranges and min(front_ranges) < SAFE_DISTANCE:
-            # Too close to a wall → rotate away
-            output.linear.x = 0.0
-            output.angular.z = 0.6
-        else:
-            vx = 0.6 * (target_distance - TARGET_DISTANCE)
-            wz = 1.5 * target_angle
-
-            vx = max(min(vx, MAX_LINEAR_SPEED), 0.0)
-            wz = max(min(wz, MAX_ANGULAR_SPEED), -MAX_ANGULAR_SPEED)
-
-            output.linear.x = vx
-            output.angular.z = wz
-
-        self.publisher_.publish(output)
+        output_msg = Twist()
+        output_msg.linear.x = vx
+        output_msg.angular.z = wz
+        self.publisher_.publish(output_msg)
 
 def main(args=None):
     rclpy.init(args=args)
